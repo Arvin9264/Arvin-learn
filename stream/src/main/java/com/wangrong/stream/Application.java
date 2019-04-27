@@ -1,7 +1,9 @@
 package com.wangrong.stream;
 
-import java.util.Arrays;
-import java.util.List;
+import java.util.*;
+import java.util.function.Supplier;
+import java.util.stream.Collector;
+import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 import java.util.stream.Stream;
 
@@ -14,6 +16,9 @@ public class Application {
         application.specialStream();
         application.mapToInt();
         application.mapToObj();
+        application.executionSequence();
+        application.reuse();
+        application.collect();
     }
 
     /**
@@ -120,5 +125,108 @@ public class Application {
                     System.out.println("anyMatch: " + s);
                     return s.startsWith("A"); // 过滤出以 A 为前缀的元素
                 });
+    }
+
+    /**
+     * stream 复用
+     */
+    public void reuse(){
+        //Stream流不能复用，调用终端操作后流即关闭
+        Stream<String> stream =
+                Stream.of("d2", "a2", "b1", "b3", "c")
+                        .filter(s -> s.startsWith("a"));
+        stream.anyMatch(s -> true);    // ok
+//        stream.noneMatch(s -> true);   // java.lang.IllegalStateException: stream has already been operated upon or closed
+        //为想要执行的每个终端操作创建一个新的流链,可以通过Supplier包装流
+        Supplier<Stream<String>> streamSupplier =
+                () -> Stream.of("d2", "a2", "b1", "b3", "c")
+                        .filter(s -> s.startsWith("a"));
+        streamSupplier.get().anyMatch(s -> true);
+        streamSupplier.get().noneMatch(s -> true);
+    }
+
+    List<Person> persons = Arrays.asList(
+            new Person("Arvin",23),
+            new Person("小平",22),
+            new Person("增甫",23),
+            new Person("大豪",16)
+    );
+
+    /**
+     * collect可以将流中的元素转变成另一个不同的对象
+     * collect 接受入参为Collector（收集器），
+     * 它由四个不同的操作组成：供应器（supplier）、累加器（accumulator）、组合器（combiner）和终止器（finisher）。
+     */
+    public void collect(){
+        //从流中构造List
+        List<Person> filtered = persons.stream()
+                .filter(person -> person.name.startsWith("A"))
+                .collect(Collectors.toList());
+        System.out.println(filtered);
+        //以年龄为 key,进行分组
+        Map<Integer, List<Person>> personsByAge = persons
+                .stream()
+                .collect(Collectors.groupingBy(p -> p.age));
+        personsByAge.forEach((age, p) -> System.out.format("age %s: %s\n", age, p));
+        //在流上执行聚合操作：计算所有人的平均年龄
+        Double averageAge = persons
+                .stream()
+                .collect(Collectors.averagingInt(p -> p.age));
+        System.out.println(averageAge);
+        //更全面的统计信息，摘要收集器，可以返回一个特殊的内置统计对象（count、sum、min、average、max）
+        IntSummaryStatistics ageSummary = persons
+                .stream()
+                .collect(Collectors.summarizingInt(p -> p.age));
+        System.out.println(ageSummary);
+        //连接收集器,将所有人名连成一个字符串
+        String phrase = persons
+                .stream()
+                .map(person -> person.name)
+                .collect(Collectors.joining(" and "));
+        System.out.println(phrase);
+        /**
+         * 对于如何将流转换为 Map集合，我们必须指定 Map 的键和值。
+         * 这里需要注意，Map 的键必须是唯一的，否则会抛出IllegalStateException 异常。
+         */
+        Map<Integer, String> map = persons
+                .stream()
+                .collect(Collectors.toMap(
+                        p -> p.age,
+                        p -> p.name,
+                        (name1, name2) -> name1 + ";" + name2)); // 对于同样 key 的，将值拼接
+        System.out.println(map);
+        /**
+         * 构建自定义收集器
+         * 比如说，我们希望将流中的所有人转换成一个字符串，包含所有大写的名称，并以|分割。
+         * 通过Collector.of()创建一个新的收集器
+         * 由于Java 中的字符串是 final 类型的，我们需要借助辅助类StringJoiner，来帮我们构造字符串。
+         * 1.最开始供应器使用分隔符构造了一个StringJointer。
+         * 2.累加器用于将每个人的人名转大写，然后加到StringJointer中。
+         * 3.组合器将两个StringJointer合并为一个。
+         * 4.最终，终结器从StringJointer构造出预期的字符串。
+         */
+        Collector<Person, StringJoiner,String> personStringJoinerStringCollector =
+                Collector.of(
+                        () -> new StringJoiner("|"),//supplier 供应器
+                        (j, p) -> j.add(p.name.toUpperCase()),//accumulator累加器
+                        (j1, j2) -> j1.merge(j2),             //combiner组合器
+                        StringJoiner::toString                //finisher终止器
+                );
+        String names = persons.stream().collect(personStringJoinerStringCollector);//传入自定义的收集器
+        System.out.println(names);
+    }
+
+
+
+}
+class Person{
+    String name;
+    int age;
+    Person(String name,int age){
+        this.name = name;
+        this.age = age;
+    }
+    public String toString(){
+        return name;
     }
 }
