@@ -1,6 +1,7 @@
 package com.wangrong.stream;
 
 import java.util.*;
+import java.util.concurrent.ForkJoinPool;
 import java.util.function.Supplier;
 import java.util.stream.Collector;
 import java.util.stream.Collectors;
@@ -11,14 +12,17 @@ public class Application {
 
     public static void main(String[] args) {
         Application application = new Application();
-        application.howToWork();
-        application.creatStream();
-        application.specialStream();
-        application.mapToInt();
-        application.mapToObj();
-        application.executionSequence();
-        application.reuse();
-        application.collect();
+//        application.howToWork();
+//        application.creatStream();
+//        application.specialStream();
+//        application.mapToInt();
+//        application.mapToObj();
+//        application.executionSequence();
+//        application.reuse();
+//        application.collect();
+//        application.flatMap();
+//        application.reduce();
+        application.parallel();
     }
 
     /**
@@ -216,9 +220,172 @@ public class Application {
         System.out.println(names);
     }
 
+    /**
+     * flatMap 能够将流的每个元素，转换为其他对象的流，因此每个对象可以被转换成>=0个其他对象，并以流的形式返回
+     */
+    public void flatMap(){
+        List<Foo> foos = new ArrayList<>();
+        //创建foo集合 包含三个foo
+        IntStream.range(1,4).forEach(i -> foos.add(new Foo("Foo"+i)));
+        //创建bars集合 每个foo包含三个bar
+        foos.forEach(foo -> IntStream.range(1,4).forEach(i -> foo.bars.add(new Bar("Bar"+i+" <- "+ foo.name))));
+        foos.stream().flatMap(foo -> foo.bars.stream()).forEach(bar -> System.out.println(bar.name));
+        //简化后
+        IntStream.range(1,4)
+                .mapToObj(i -> new Foo("Foo"+i))
+                .peek(foo -> IntStream.range(1,4)
+                        .mapToObj(i -> new Bar("Bar"+i+" <- "+ foo.name))
+                        .forEach(foo.bars::add))
+                .flatMap(foo -> foo.bars.stream())
+                .forEach(bar -> System.out.println(bar.name));
+        /**
+         * flatMap也可用于Java8引入的Optional类。
+         * Optional的flatMap操作返回一个Optional或其他类型的对象。所以它可以用于避免繁琐的null检查。
+         */
+        //为了处理从 Outer 对象中获取最底层的 foo 字符串，你需要添加多个null检查来避免可能发生的NullPointerException
+        Outer outer = new Outer();
+        if(outer!=null && outer.nested!=null && outer.nested.inner!=null){
+            System.out.println(outer.nested.inner.foo);
+        }
+        //我们还可以使用Optional的flatMap操作，来完成上述相同功能的判断，且更加优雅
+        Optional.of(new Outer())
+                .flatMap(o -> Optional.ofNullable(o.nested))
+                .flatMap(n -> Optional.ofNullable(n.inner))
+                .flatMap(i -> Optional.ofNullable(i.foo))
+                .ifPresent(System.out::println);
+        //如果不为空的话，每个flatMap的调用都会返回预期对象的Optional包装，否则返回为null的Optional包装类。
+    }
 
+    /**
+     * reduce（减少、归纳为） 规约操作可以将流的所有元素组合成一个结果
+     */
+    public void reduce(){
+        /**
+         * 第一种将流中的元素规约成流中的一个元素。
+         * reduce方法接受BinaryOperator积累函数。
+         * 该函数实际上是两个操作数类型相同的BiFunction。
+         * BiFunction功能和Function一样，但是它接受两个参数。
+         * 示例代码中，我们比较两个人的年龄，来返回年龄较大的人。
+         */
+        persons.stream()
+                .reduce((p1,p2) -> p1.age > p2.age ? p1 : p2)
+                .ifPresent(System.out::println);
+        /**
+         * 第二种reduce方法接受标识值和BinaryOperator累加器。
+         * 此方法可用于构造一个新的 Person，其中包含来自流中所有其他人的聚合名称和年龄：
+         */
+        Person result = persons.stream()
+                .reduce(new Person("",0),(p1,p2) -> {
+                    p1.age += p2.age;
+                    p1.name += p2.name;
+                    return p1;
+                });
+        System.out.format("name=%s; age=%s", result.name, result.age);
+        /**
+         * 第三种reduce方法接受三个参数：标识值，BiFunction累加器和类型的组合器函数BinaryOperator。
+         * 由于初始值的类型不一定为Person，我们可以使用这个归约函数来计算所有人的年龄总和：
+         */
+//        Integer ageSum = persons.stream()
+//                .reduce(0,
+//                        (sum, p) -> {
+//                            System.out.format("accumulator: sum=%s; person=%s\n", sum, p);
+//                            return sum += p.age;
+//                        },
+//                        (sum1,sum2) -> {
+//                            System.out.format("combiner: sum1=%s; sum2=%s\n", sum1, sum2);
+//                            return sum1+sum2;
+//                        });
+//        System.out.println(ageSum);//这里没有打印组合器调用
+        /**
+         * 用并行流的方式调用
+         * 并行流的执行方式完全不同。这里组合器被调用了。
+         * 实际上，由于累加器被并行调用，组合器需要被用于计算部分累加值的总和。
+         */
+        Integer ageSum = persons
+                .parallelStream()
+                .reduce(0,
+                        (sum, p) -> {
+                            System.out.format("accumulator: sum=%s; person=%s\n", sum, p);
+                            return sum += p.age;
+                        },
+                        (sum1,sum2) -> {
+                            System.out.format("combiner: sum1=%s; sum2=%s\n", sum1, sum2);
+                            return sum1+sum2;
+                        });
+    }
+
+    /**
+     * 并行流
+     * 流是可以并行执行的，当流中存在大量元素时，可以显著提升性能
+     */
+    public void parallel(){
+        //线程池最大数
+        System.out.println(ForkJoinPool.commonPool().getParallelism());
+        //可以设置jvm参数进行修改
+        //-Djava.util.concurrent.ForkJoinPool.common.parallelism=5
+
+        /**
+         * 集合支持parallelStream()方法来创建元素的并行流。
+         * 或者你可以在已存在的数据流上调用中间方法parallel()，将串行流转换为并行流
+         */
+        Arrays.asList("a1", "a2", "b1", "c2", "c1")
+                .parallelStream()
+                .filter(s -> {
+                    System.out.format("filter: %s [%s]\n",s,Thread.currentThread().getName());
+                    return true;
+                })
+                .map(s -> {
+                    System.out.format("map: %s [%s]\n",
+                            s, Thread.currentThread().getName());
+                    return s.toUpperCase();
+                })
+                .sorted((s1, s2) -> {
+                    System.out.format("sort: %s <> %s [%s]\n",
+                            s1, s2, Thread.currentThread().getName());
+                    return s1.compareTo(s2);
+                })
+                .forEach(s -> System.out.format("forEach: %s [%s]\n",
+                        s, Thread.currentThread().getName()));
+        /**
+         * 貌似sort只在主线程上串行执行。
+         * 但是实际上，并行流中的sort在底层使用了Java8中新的方法Arrays.parallelSort()
+         * 如 javadoc官方文档解释的，这个方法会按照数据长度来决定以串行方式，或者以并行的方式来执行。
+         *
+         * 所有并行流操作都共享相同的 JVM 相关的公共ForkJoinPool。
+         * 所以你可能需要避免写出一些又慢又卡的流式操作，这很有可能会拖慢你应用中，
+         * 严重依赖并行流的其它部分代码的性能。
+         */
+    }
 
 }
+
+class Outer{
+    Nested nested;
+}
+
+class Nested{
+    Inner inner;
+}
+
+class Inner{
+    String foo;
+}
+
+class Foo{
+    String name;
+    List<Bar> bars = new ArrayList<Bar>();
+    Foo(String name){
+        this.name = name;
+    }
+}
+
+class Bar{
+    String name;
+    Bar(String name){
+        this.name = name;
+    }
+}
+
 class Person{
     String name;
     int age;
